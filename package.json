@@ -1,0 +1,13 @@
+{
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.7",
+    "@types/bun": "latest",
+    "@types/node": "^24.10.1"
+  },
+  "name": "content",
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "private": true,
+  "type": "module"
+}
