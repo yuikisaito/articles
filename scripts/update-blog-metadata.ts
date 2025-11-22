@@ -58,6 +58,8 @@ const main = () => {
     const isNew = isFileNew(metadataFile);
     updateJSON(metadataFile, isNew);
 
+    run(`biome format --write "${metadataFile}"`);
+
     run(`git add -- "${metadataFile}"`);
     console.log(`Updated: ${metadataFile} (new=${isNew ? "yes" : "no"})`);
   }
