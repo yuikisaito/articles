@@ -1,67 +1,87 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path/posix";
 
-const nowISO = (): string => new Date().toISOString();
+const BLOG_DIR = "blog";
 
 const run = (cmd: string): string =>
   execSync(cmd, { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] }).trim();
 
-const isBlogIndex = (f: string): boolean =>
-  /^blog\/([^/]+)\/(index\.md|metadata\.json)$/.test(f);
+const getCommitDate = (file: string, first: boolean): string | null => {
+  const cmd = first
+    ? `git log --diff-filter=A --format=%cI -- "${file}" | tail -n 1`
+    : `git log --format=%cI -n 1 -- "${file}"`;
 
-const getStagedBlogIndexes = (): string[] =>
-  run("git diff --cached --name-only --diff-filter=ACM")
-    .split("\n")
-    .filter(Boolean)
-    .filter(isBlogIndex);
-
-const isFileNew = (path: string): boolean => {
-  const status = run(`git diff --cached --name-status "${path}"`);
-  if (status.startsWith("A")) return true;
-
-  const untracked = run("git ls-files --others --exclude-standard")
-    .split("\n")
-    .includes(path);
-  return untracked;
+  const out = run(cmd);
+  return out === "" ? null : out;
 };
 
-const updateJSON = (file: string, isNew: boolean) => {
-  const now = nowISO();
-  const json = JSON.parse(readFileSync(file, "utf8"));
+const getArticleDates = (dir: string) => {
+  const metadata = join(dir, "metadata.json");
+  const markdown = join(dir, "index.md");
 
-  if (isNew) {
-    json.createdAt = now;
-    delete json.updatedAt;
+  const createdMeta = getCommitDate(metadata, true);
+  const createdMarkdown = getCommitDate(markdown, true);
+  const updatedMeta = getCommitDate(metadata, false);
+  const updatedMarkdown = getCommitDate(markdown, false);
+
+  const createdCandidates = [createdMeta, createdMarkdown].filter(Boolean);
+  const updatedCandidates = [updatedMeta, updatedMarkdown].filter(Boolean);
+
+  if (createdCandidates.length === 0 || updatedCandidates.length === 0) return null;
+
+  const created = createdCandidates.sort()[0];
+  const updated = updatedCandidates.sort().slice(-1)[0];
+
+  return { created, updated };
+};
+
+const updateMetadata = (dir: string): boolean => {
+  const metadataFile = join(dir, "metadata.json");
+  if (!existsSync(metadataFile)) return false;
+
+  const dates = getArticleDates(dir);
+  if (!dates) return false;
+
+  const json = JSON.parse(readFileSync(metadataFile, "utf8"));
+
+  json.createdAt = dates.created;
+
+  if (dates.created !== dates.updated) {
+    json.updatedAt = dates.updated;
   } else {
-    json.updatedAt = now;
+    delete json.updatedAt;
   }
 
-  writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
+  const serialized = `${JSON.stringify(json, null, 2)}\n`;
+  writeFileSync(metadataFile, serialized);
+
+  run(`biome format --write "${metadataFile}"`);
+
+  return true;
 };
 
 const main = () => {
-  const staged = getStagedBlogIndexes();
-  if (staged.length === 0) {
-    console.log("対象なし");
-    return;
-  }
+  const dirs = readdirSync(BLOG_DIR)
+    .map((d) => join(BLOG_DIR, d))
+    .filter((d) => statSync(d).isDirectory());
 
-  const dirs = [
-    ...new Set(staged.map((f) => f.replace(/(index\.md|metadata\.json)$/, ""))),
-  ];
+  let changed = false;
 
   for (const dir of dirs) {
-    const metadataFile = join(dir, "metadata.json");
-    if (!existsSync(metadataFile)) continue;
+    const ok = updateMetadata(dir);
+    const metadataJson = join(dir, "metadata.json");
+    if (ok) {
+      run(`git add -- "${metadataJson}"`);
+      changed = true;
+      console.log(`更新: ${metadataJson}`);
+    }
+  }
 
-    const isNew = isFileNew(metadataFile);
-    updateJSON(metadataFile, isNew);
-
-    run(`biome format --write "${metadataFile}"`);
-
-    run(`git add -- "${metadataFile}"`);
-    console.log(`Updated: ${metadataFile} (new=${isNew ? "yes" : "no"})`);
+  if (changed) {
+    run(`git commit -m "メタデータを更新"`);
+  } else {
+    console.log("変更なし");
   }
 };
 
