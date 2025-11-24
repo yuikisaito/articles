@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - blog/**
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        id: checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Git 設定
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+
+      - name: メタデータを更新
+        run: bun run ./scripts/update-blog-metadata.ts
+
+      - name: ウェブサイトのサブモジュール更新
+        run: |
+          git clone https://x-access-token:${{ secrets.SUBMODULE_UPDATE_TOKEN }}@github.com/yuikisaito/ysaito.win.git
+          cd ysaito.win
+          git submodule update --init --remote
+          git add .
+          git diff --cached --quiet || git commit -m "サブモジュールを更新"
+          git push origin main
